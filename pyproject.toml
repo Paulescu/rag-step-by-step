@@ -4,7 +4,19 @@ version = "0.1.0"
 description = "Customer support chatbot"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pypdf>=6.14.2",
+    "qdrant-client>=1.19.0",
+]
+
+[project.optional-dependencies]
+# Pulls torch. Only needed to actually run BGE-M3; chunking, storage and tests do not.
+embeddings = [
+    "FlagEmbedding>=1.3.0",
+]
+
+[project.scripts]
+kb = "customer_support_chatbot.ingestion.cli:main"
 
 [build-system]
 requires = ["hatchling"]
