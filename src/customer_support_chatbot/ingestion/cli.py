@@ -15,7 +15,13 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 
 from customer_support_chatbot.ingestion.chunking import ChunkingSettings
-from customer_support_chatbot.ingestion.embedding import BgeM3Embedder
+from customer_support_chatbot.ingestion.embedding import (
+    BGE_M3_DENSE_SIZE,
+    DEFAULT_EMBEDDING_BATCH_SIZE,
+    DEFAULT_EMBEDDING_MAX_LENGTH,
+    DEFAULT_EMBEDDING_MODEL,
+    BgeM3Embedder,
+)
 from customer_support_chatbot.ingestion.extraction import (
     DEFAULT_MIN_CHARS_PER_PAGE,
     PdfPageExtractor,
@@ -23,10 +29,16 @@ from customer_support_chatbot.ingestion.extraction import (
 from customer_support_chatbot.ingestion.models import DocumentStatus, IngestOutcome
 from customer_support_chatbot.ingestion.pipeline import IngestionPipeline
 from customer_support_chatbot.ingestion.raw_files import LocalRawFileStore
-from customer_support_chatbot.ingestion.store import KnowledgeBase
+from customer_support_chatbot.ingestion.store import (
+    DEFAULT_CHUNKS_COLLECTION,
+    DEFAULT_DOCUMENTS_COLLECTION,
+    DEFAULT_SEARCH_CANDIDATES,
+    KnowledgeBase,
+)
 
 DEFAULT_QDRANT_URL = "http://localhost:6333"
 DEFAULT_RAW_FILES_ROOT = "./data/raw"
+DEFAULT_SEARCH_RESULTS = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +57,50 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(os.environ.get("RAW_FILES_ROOT", DEFAULT_RAW_FILES_ROOT)),
         help="Directory where uploaded files are kept.",
     )
+    # Collection names are global rather than per-command: ingesting into one pair of collections
+    # and searching another would silently return nothing. Overriding both is how two chunking
+    # configurations can be indexed side by side and compared.
+    parser.add_argument(
+        "--chunks-collection",
+        default=os.environ.get("CHUNKS_COLLECTION", DEFAULT_CHUNKS_COLLECTION),
+        help="Qdrant collection holding Chunks.",
+    )
+    parser.add_argument(
+        "--documents-collection",
+        default=os.environ.get("DOCUMENTS_COLLECTION", DEFAULT_DOCUMENTS_COLLECTION),
+        help="Qdrant collection holding Documents.",
+    )
+
+    # Same reasoning: a query has to be embedded by the model that embedded the Chunks.
+    embedding = parser.add_argument_group("embedding")
+    embedding.add_argument(
+        "--embedding-model",
+        default=os.environ.get("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
+        help="Name of the embedding model to load.",
+    )
+    embedding.add_argument(
+        "--embedding-dense-size",
+        type=int,
+        default=BGE_M3_DENSE_SIZE,
+        help="Width of the dense vector the model produces. Must match the collection.",
+    )
+    embedding.add_argument(
+        "--embedding-batch-size",
+        type=int,
+        default=DEFAULT_EMBEDDING_BATCH_SIZE,
+        help="Texts embedded per forward pass.",
+    )
+    embedding.add_argument(
+        "--embedding-max-length",
+        type=int,
+        default=DEFAULT_EMBEDDING_MAX_LENGTH,
+        help="Token budget per text. Longer texts are truncated by the model.",
+    )
+    embedding.add_argument(
+        "--embedding-fp16",
+        action="store_true",
+        help="Load the model in half precision.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -57,8 +113,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Re-ingest even if the file is unchanged.",
     )
-    ingest.add_argument("--max-tokens", type=int, default=ChunkingSettings().max_tokens)
-    ingest.add_argument("--overlap-tokens", type=int, default=ChunkingSettings().overlap_tokens)
+    ingest.add_argument(
+        "--max-tokens",
+        type=int,
+        default=ChunkingSettings().max_tokens,
+        help="Chunk size: the token budget a single Chunk is packed up to.",
+    )
+    ingest.add_argument(
+        "--overlap-tokens",
+        type=int,
+        default=ChunkingSettings().overlap_tokens,
+        help="Tokens carried from the end of one Chunk into the next.",
+    )
     ingest.add_argument(
         "--min-chars-per-page",
         type=float,
@@ -71,37 +137,69 @@ def build_parser() -> argparse.ArgumentParser:
 
     search = subparsers.add_parser("search", help="Hybrid search over the Knowledge Base.")
     search.add_argument("query", help="The question to search for.")
-    search.add_argument("--limit", type=int, default=5)
+    search.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_SEARCH_RESULTS,
+        help="How many Chunks to return.",
+    )
+    search.add_argument(
+        "--candidates",
+        type=int,
+        default=DEFAULT_SEARCH_CANDIDATES,
+        help="Chunks each of the dense and sparse branches contributes before fusion.",
+    )
 
     subparsers.add_parser("list", help="List Documents in the Knowledge Base.")
 
     return parser
 
 
-def _knowledge_base(args: argparse.Namespace) -> KnowledgeBase:
+def build_knowledge_base(args: argparse.Namespace) -> KnowledgeBase:
     client = QdrantClient(url=str(args.qdrant_url))
-    knowledge_base = KnowledgeBase(client, dense_size=1024)
+    knowledge_base = KnowledgeBase(
+        client,
+        dense_size=int(args.embedding_dense_size),
+        chunks_collection=str(args.chunks_collection),
+        documents_collection=str(args.documents_collection),
+    )
     knowledge_base.ensure_collections()
     return knowledge_base
 
 
-def _pipeline(args: argparse.Namespace, knowledge_base: KnowledgeBase) -> IngestionPipeline:
+def build_embedder(args: argparse.Namespace) -> BgeM3Embedder:
+    return BgeM3Embedder(
+        str(args.embedding_model),
+        use_fp16=bool(args.embedding_fp16),
+        batch_size=int(args.embedding_batch_size),
+        max_length=int(args.embedding_max_length),
+        dense_size=int(args.embedding_dense_size),
+    )
+
+
+def build_chunking_settings(args: argparse.Namespace) -> ChunkingSettings:
+    """Chunking flags only exist on `ingest`, so the defaults stand in for the other commands."""
+    defaults = ChunkingSettings()
+    return ChunkingSettings(
+        max_tokens=int(getattr(args, "max_tokens", defaults.max_tokens)),
+        overlap_tokens=int(getattr(args, "overlap_tokens", defaults.overlap_tokens)),
+    )
+
+
+def build_pipeline(args: argparse.Namespace, knowledge_base: KnowledgeBase) -> IngestionPipeline:
     return IngestionPipeline(
         extractor=PdfPageExtractor(),
-        embedder=BgeM3Embedder(),
+        embedder=build_embedder(args),
         knowledge_base=knowledge_base,
         raw_files=LocalRawFileStore(Path(args.raw_files_root)),
-        chunking=ChunkingSettings(
-            max_tokens=getattr(args, "max_tokens", ChunkingSettings().max_tokens),
-            overlap_tokens=getattr(args, "overlap_tokens", ChunkingSettings().overlap_tokens),
-        ),
-        min_chars_per_page=getattr(args, "min_chars_per_page", DEFAULT_MIN_CHARS_PER_PAGE),
+        chunking=build_chunking_settings(args),
+        min_chars_per_page=float(getattr(args, "min_chars_per_page", DEFAULT_MIN_CHARS_PER_PAGE)),
     )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    knowledge_base = _knowledge_base(args)
+    knowledge_base = build_knowledge_base(args)
 
     if args.command == "list":
         documents = knowledge_base.list_documents()
@@ -125,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No Document with key {args.key}.", file=sys.stderr)
         return 1
 
-    pipeline = _pipeline(args, knowledge_base)
+    pipeline = build_pipeline(args, knowledge_base)
 
     if args.command == "ingest":
         result = pipeline.ingest(
@@ -151,7 +249,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "search":
-        hits = pipeline.search(str(args.query), limit=int(args.limit))
+        hits = pipeline.search(
+            str(args.query),
+            limit=int(args.limit),
+            candidates=int(args.candidates),
+        )
         if not hits:
             print("No results.")
             return 0

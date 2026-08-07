@@ -61,8 +61,41 @@ uv run kb search "which vaccines are required before school"
 uv run kb delete --key vaccination-schedule
 ```
 
-Configuration is via flags or environment: `QDRANT_URL` (default `http://localhost:6333`) and
-`RAW_FILES_ROOT` (default `./data/raw`).
+Configuration is via flags or environment: `QDRANT_URL` (default `http://localhost:6333`),
+`RAW_FILES_ROOT` (default `./data/raw`), `CHUNKS_COLLECTION` (default `chunks`),
+`DOCUMENTS_COLLECTION` (default `documents`) and `EMBEDDING_MODEL` (default `BAAI/bge-m3`).
+
+### Tuning parameters
+
+Every parameter that affects retrieval quality is a flag, so a configuration can be swept without
+editing code. Defaults are unvalidated, see "Not built yet" below.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--max-tokens` | `500` | Chunk size: the token budget a Chunk is packed up to. |
+| `--overlap-tokens` | `60` | Tokens carried from the end of one Chunk into the next. |
+| `--min-chars-per-page` | `100` | Below this, the Document is quarantined as a probable scan. |
+| `--limit` | `5` | How many Chunks a search returns (top-k). |
+| `--candidates` | `20` | Chunks each of the dense and sparse branches contributes before fusion. |
+| `--embedding-max-length` | `1024` | Token budget per text. Longer texts are truncated by the model. |
+| `--embedding-model` | `BAAI/bge-m3` | Which model produces the embeddings. |
+| `--embedding-dense-size` | `1024` | Width of the dense vector. Must match the collection. |
+| `--embedding-batch-size` | `8` | Texts embedded per forward pass. Throughput only. |
+| `--embedding-fp16` | off | Load the model in half precision. |
+
+`--max-tokens`, `--overlap-tokens` and `--min-chars-per-page` are `ingest` flags; `--limit` and
+`--candidates` are `search` flags. The embedding and collection flags come before the subcommand,
+because a query has to be embedded by the same model that embedded the Chunks and read from the
+same collections they were written to.
+
+A collection pair is bound to one configuration, so two of them can be compared side by side:
+
+```bash
+uv run kb --chunks-collection chunks-250 --documents-collection documents-250 \
+  ingest --key vaccination-schedule --max-tokens 250 --overlap-tokens 30 path/to/schedule.pdf
+uv run kb --chunks-collection chunks-250 --documents-collection documents-250 \
+  search "which vaccines are required before school" --limit 5 --candidates 50
+```
 
 ### Development
 
@@ -83,8 +116,8 @@ QDRANT_URL=http://localhost:6333 uv run pytest
 ### Not built yet
 
 - **Retrieval evaluation.** Chunk size, overlap, top-k and the fusion candidate count are currently
-  unvalidated defaults. `kb search` exists so a golden set can be scored without waiting for the
-  chatbot.
+  unvalidated defaults. They are all exposed as flags (see "Tuning parameters"), but nothing scores
+  them yet. `kb search` exists so a golden set can be scored without waiting for the chatbot.
 - **An upload interface for the Knowledge Manager.** Ingestion is CLI-driven and run by engineers.
 - **OCR**, so scanned PDFs stay quarantined.
 - **Formats other than PDF.** `PageExtractor` is the seam where they would be added.

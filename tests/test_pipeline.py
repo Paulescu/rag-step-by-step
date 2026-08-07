@@ -224,3 +224,21 @@ def test_search_finds_the_document_that_mentions_the_query_terms(
     assert hits
     assert hits[0].document_key == "enrolment-rules"
     assert hits[0].page_number == 1
+
+
+def test_the_fusion_candidate_count_bounds_what_search_can_return(
+    pipeline: IngestionPipeline,
+    tmp_path: Path,
+) -> None:
+    """`candidates` is a retrieval knob in its own right: it caps each branch before fusion."""
+    for index in range(4):
+        pipeline.ingest(
+            f"notice-{index}",
+            write_document(tmp_path, f"notice-{index}.txt", [f"Notice number {index} about fees."]),
+        )
+
+    narrow = pipeline.search("notice about fees", limit=4, candidates=1)
+    wide = pipeline.search("notice about fees", limit=4, candidates=20)
+
+    assert len(narrow) <= 2
+    assert len(wide) == 4

@@ -26,6 +26,15 @@ from customer_support_chatbot.ingestion.models import (
 DENSE_VECTOR: Final = "dense"
 SPARSE_VECTOR: Final = "sparse"
 
+DEFAULT_CHUNKS_COLLECTION: Final = "chunks"
+DEFAULT_DOCUMENTS_COLLECTION: Final = "documents"
+
+# How many Chunks a search returns.
+DEFAULT_SEARCH_LIMIT: Final = 10
+# How many Chunks each of the dense and sparse branches contributes before fusion. Raising it
+# widens the pool reciprocal rank fusion picks from, at the cost of a slower query.
+DEFAULT_SEARCH_CANDIDATES: Final = 20
+
 _POINT_NAMESPACE: Final = uuid.UUID("6f9619ff-8b86-d011-b42d-00c04fc964ff")
 
 
@@ -83,8 +92,8 @@ class KnowledgeBase:
         client: QdrantClient,
         *,
         dense_size: int,
-        chunks_collection: str = "chunks",
-        documents_collection: str = "documents",
+        chunks_collection: str = DEFAULT_CHUNKS_COLLECTION,
+        documents_collection: str = DEFAULT_DOCUMENTS_COLLECTION,
     ) -> None:
         self._client = client
         self._dense_size = dense_size
@@ -284,7 +293,12 @@ class KnowledgeBase:
                 break
         return [text for _, text in sorted(chunks)]
 
-    def search(self, query: Embedding, limit: int = 10, candidates: int = 20) -> list[SearchHit]:
+    def search(
+        self,
+        query: Embedding,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+        candidates: int = DEFAULT_SEARCH_CANDIDATES,
+    ) -> list[SearchHit]:
         """Hybrid search: dense and sparse branches fused by reciprocal rank fusion in Qdrant."""
         response = self._client.query_points(
             collection_name=self._chunks,
