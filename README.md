@@ -106,12 +106,35 @@ uv run pyright
 ```
 
 Tests use a fake extractor and a deterministic hashing embedder, so the suite needs neither PDFs
-nor BGE-M3. Tests that only a real server can answer live in `tests/test_knowledge_base_on_server.py`
-and are skipped unless `QDRANT_URL` is set:
+nor BGE-M3.
+
+#### Running against a real Qdrant server
+
+Three tests in `tests/test_knowledge_base_on_server.py` cover behaviour only a real server has:
+payload indexes, server-side filtering, and reciprocal rank fusion. Local in-memory Qdrant ignores
+payload indexes entirely, so these would pass vacuously there. They are skipped unless `QDRANT_URL`
+is set, which keeps the default run hermetic.
+
+Start a server, then point the suite at it:
 
 ```bash
+docker run -p 6333:6333 qdrant/qdrant
 QDRANT_URL=http://localhost:6333 uv run pytest
 ```
+
+The server tests create their own collections named `test_chunks_<uuid>` and
+`test_documents_<uuid>` and delete them on teardown, so they never touch the `chunks` and
+`documents` collections your own data lives in. A throwaway container without the `-v` mount is
+fine, no volume is needed.
+
+| Command | Tests run |
+| --- | --- |
+| `uv run pytest` | 34 run, 3 skipped |
+| `QDRANT_URL=http://localhost:6333 uv run pytest` | 37 run |
+
+Note that `QDRANT_URL` is also the CLI's own configuration variable. If you have it exported in
+your shell for `uv run kb`, a plain `uv run pytest` will pick it up and run the server tests too.
+To force the hermetic run regardless of environment, use `env -u QDRANT_URL uv run pytest`.
 
 ### Not built yet
 
