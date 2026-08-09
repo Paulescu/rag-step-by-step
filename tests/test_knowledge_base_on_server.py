@@ -24,7 +24,7 @@ from customer_support_chatbot.ingestion.models import (
     EmbeddedChunk,
 )
 from customer_support_chatbot.ingestion.store import KnowledgeBase
-from tests.conftest import DENSE_SIZE, HashingEmbedder
+from tests.fakes import DENSE_SIZE, HashingEmbedder
 
 QDRANT_URL = os.environ.get("QDRANT_URL")
 

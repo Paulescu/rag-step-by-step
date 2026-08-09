@@ -1,80 +1,16 @@
 from __future__ import annotations
 
-import hashlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 from qdrant_client import QdrantClient
 
-from customer_support_chatbot.ingestion.models import Embedding, Page, SparseVector
+from customer_support_chatbot.ingestion.chunking import ChunkingSettings
+from customer_support_chatbot.ingestion.pipeline import IngestionPipeline
+from customer_support_chatbot.ingestion.raw_files import LocalRawFileStore
 from customer_support_chatbot.ingestion.store import KnowledgeBase
-
-DENSE_SIZE = 32
-SPARSE_SIZE = 4096
-
-PAGE_BREAK = "\f"
-
-
-class TextFileExtractor:
-    """Stand-in for the PDF extractor: reads a text file, form feeds separate pages.
-
-    Lets the pipeline be tested end to end without PDF fixtures, which is the whole reason
-    PageExtractor is a Protocol.
-    """
-
-    def extract(self, path: Path) -> list[Page]:
-        raw = path.read_text(encoding="utf-8")
-        return [
-            Page(number=number, text=text)
-            for number, text in enumerate(raw.split(PAGE_BREAK), start=1)
-        ]
-
-
-def _token_bucket(word: str, buckets: int) -> int:
-    return int.from_bytes(hashlib.sha1(word.encode("utf-8")).digest()[:4], "big") % buckets
-
-
-class HashingEmbedder:
-    """Deterministic bag-of-words embedder.
-
-    Not semantic, but it is stable and it makes texts sharing words come out close together,
-    which is enough to test that the search path wires up correctly.
-    """
-
-    @property
-    def dense_size(self) -> int:
-        return DENSE_SIZE
-
-    def embed(self, texts: list[str]) -> list[Embedding]:
-        return [self._embed_one(text) for text in texts]
-
-    def _embed_one(self, text: str) -> Embedding:
-        words = [word.strip(".,:;!?").lower() for word in text.split() if word.strip(".,:;!?")]
-
-        dense = [0.0] * DENSE_SIZE
-        for word in words:
-            dense[_token_bucket(word, DENSE_SIZE)] += 1.0
-        magnitude = sum(value * value for value in dense) ** 0.5
-        if magnitude > 0:
-            dense = [value / magnitude for value in dense]
-        else:
-            dense[0] = 1.0
-
-        weights: dict[int, float] = {}
-        for word in words:
-            index = _token_bucket(word, SPARSE_SIZE)
-            weights[index] = weights.get(index, 0.0) + 1.0
-        if not weights:
-            weights[0] = 1.0
-
-        return Embedding(
-            dense=dense,
-            sparse=SparseVector(
-                indices=list(weights.keys()),
-                values=list(weights.values()),
-            ),
-        )
+from tests.fakes import DENSE_SIZE, HashingEmbedder, TextFileExtractor
 
 
 @pytest.fixture
@@ -94,3 +30,32 @@ def knowledge_base() -> Iterator[KnowledgeBase]:
     base.ensure_collections()
     yield base
     client.close()
+
+
+@pytest.fixture
+def make_pipeline(
+    knowledge_base: KnowledgeBase,
+    extractor: TextFileExtractor,
+    embedder: HashingEmbedder,
+    tmp_path: Path,
+) -> Callable[..., IngestionPipeline]:
+    """Builds a pipeline wired to the in-memory knowledge base, with the raw file root swappable."""
+
+    def build(raw_files_root: Path | None = None) -> IngestionPipeline:
+        return IngestionPipeline(
+            extractor=extractor,
+            embedder=embedder,
+            knowledge_base=knowledge_base,
+            raw_files=LocalRawFileStore(raw_files_root or tmp_path / "raw"),
+            chunking=ChunkingSettings(max_tokens=60, overlap_tokens=10),
+            # Fixtures are single sentences, so the scan threshold is lowered rather than padding
+            # every document. The threshold itself is covered in test_extraction.py.
+            min_chars_per_page=20,
+        )
+
+    return build
+
+
+@pytest.fixture
+def pipeline(make_pipeline: Callable[..., IngestionPipeline]) -> IngestionPipeline:
+    return make_pipeline()
