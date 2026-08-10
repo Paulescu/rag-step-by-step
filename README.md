@@ -28,6 +28,10 @@ Everything is stored in Qdrant and nothing else (ADR-0001):
 Raw uploaded files are kept outside Qdrant, so the index can always be rebuilt and a deletion is
 reversible.
 
+[docs/ingestion-pipeline.md](./docs/ingestion-pipeline.md) walks through a single ingestion step by
+step: what each stage does, what is written to each collection, and why the steps are ordered the
+way they are.
+
 ### Behaviour worth knowing
 
 - **A Document is identified by its Document Key**, chosen by the Knowledge Manager. Re-uploading
