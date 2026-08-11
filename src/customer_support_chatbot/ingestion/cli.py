@@ -41,11 +41,8 @@ DEFAULT_RAW_FILES_ROOT = "./data/raw"
 DEFAULT_SEARCH_RESULTS = 5
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="kb",
-        description="Ingest PDFs into the Knowledge Base and search it.",
-    )
+def add_connection_arguments(parser: argparse.ArgumentParser) -> None:
+    """Where the two stores live: the vectors in Qdrant, the uploaded files on disk."""
     parser.add_argument(
         "--qdrant-url",
         default=os.environ.get("QDRANT_URL", DEFAULT_QDRANT_URL),
@@ -57,9 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(os.environ.get("RAW_FILES_ROOT", DEFAULT_RAW_FILES_ROOT)),
         help="Directory where uploaded files are kept.",
     )
-    # Collection names are global rather than per-command: ingesting into one pair of collections
-    # and searching another would silently return nothing. Overriding both is how two chunking
-    # configurations can be indexed side by side and compared.
+
+
+def add_collection_arguments(parser: argparse.ArgumentParser) -> None:
+    """Collection names are global rather than per-command: ingesting into one pair of collections
+    and searching another would silently return nothing. Overriding both is how two chunking
+    configurations can be indexed side by side and compared.
+    """
     parser.add_argument(
         "--chunks-collection",
         default=os.environ.get("CHUNKS_COLLECTION", DEFAULT_CHUNKS_COLLECTION),
@@ -71,7 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Qdrant collection holding Documents.",
     )
 
-    # Same reasoning: a query has to be embedded by the model that embedded the Chunks.
+
+def add_embedding_arguments(parser: argparse.ArgumentParser) -> None:
+    """Global for the same reason as the collections: a query has to be embedded by the model
+    that embedded the Chunks.
+    """
     embedding = parser.add_argument_group("embedding")
     embedding.add_argument(
         "--embedding-model",
@@ -102,9 +107,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Load the model in half precision.",
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    ingest = subparsers.add_parser("ingest", help="Ingest or re-ingest a PDF.")
+def add_ingest_arguments(ingest: argparse.ArgumentParser) -> None:
     ingest.add_argument("--key", required=True, help="Stable Document Key.")
     ingest.add_argument("path", type=Path, help="Path to the PDF.")
     ingest.add_argument("--title", default=None, help="Human-readable title.")
@@ -132,10 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Below this, the Document is quarantined as a probable scan.",
     )
 
-    delete = subparsers.add_parser("delete", help="Hard-delete a Document and its Chunks.")
+
+def add_delete_arguments(delete: argparse.ArgumentParser) -> None:
     delete.add_argument("--key", required=True, help="Document Key to remove.")
 
-    search = subparsers.add_parser("search", help="Hybrid search over the Knowledge Base.")
+
+def add_search_arguments(search: argparse.ArgumentParser) -> None:
     search.add_argument("query", help="The question to search for.")
     search.add_argument(
         "--limit",
@@ -150,6 +156,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Chunks each of the dense and sparse branches contributes before fusion.",
     )
 
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="kb",
+        description="Ingest PDFs into the Knowledge Base and search it.",
+    )
+    add_connection_arguments(parser)
+    add_collection_arguments(parser)
+    add_embedding_arguments(parser)
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    add_ingest_arguments(subparsers.add_parser("ingest", help="Ingest or re-ingest a PDF."))
+    add_delete_arguments(
+        subparsers.add_parser("delete", help="Hard-delete a Document and its Chunks.")
+    )
+    add_search_arguments(
+        subparsers.add_parser("search", help="Hybrid search over the Knowledge Base.")
+    )
     subparsers.add_parser("list", help="List Documents in the Knowledge Base.")
 
     return parser

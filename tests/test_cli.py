@@ -160,3 +160,64 @@ def test_the_raw_files_root_is_still_read_from_the_top_level_flag() -> None:
     args = parse(["--raw-files-root", "/tmp/raw", "ingest", "--key", "k", "k.pdf"])
 
     assert args.raw_files_root == Path("/tmp/raw")
+
+
+def test_connection_arguments_stand_on_their_own() -> None:
+    parser = argparse.ArgumentParser()
+    cli.add_connection_arguments(parser)
+
+    args = parser.parse_args(["--qdrant-url", "http://qdrant:6333", "--raw-files-root", "/tmp/raw"])
+
+    assert args.qdrant_url == "http://qdrant:6333"
+    assert args.raw_files_root == Path("/tmp/raw")
+
+
+def test_collection_arguments_stand_on_their_own() -> None:
+    parser = argparse.ArgumentParser()
+    cli.add_collection_arguments(parser)
+
+    args = parser.parse_args([])
+
+    assert args.chunks_collection == DEFAULT_CHUNKS_COLLECTION
+    assert args.documents_collection == DEFAULT_DOCUMENTS_COLLECTION
+
+
+def test_embedding_arguments_stand_on_their_own() -> None:
+    parser = argparse.ArgumentParser()
+    cli.add_embedding_arguments(parser)
+
+    args = parser.parse_args(["--embedding-fp16"])
+
+    assert args.embedding_model == DEFAULT_EMBEDDING_MODEL
+    assert args.embedding_dense_size == BGE_M3_DENSE_SIZE
+    assert args.embedding_fp16 is True
+
+
+def test_ingest_arguments_stand_on_their_own() -> None:
+    parser = argparse.ArgumentParser()
+    cli.add_ingest_arguments(parser)
+
+    args = parser.parse_args(["--key", "schedule", "schedule.pdf", "--force"])
+
+    assert args.key == "schedule"
+    assert args.path == Path("schedule.pdf")
+    assert args.title is None
+    assert args.force is True
+
+
+def test_delete_arguments_stand_on_their_own() -> None:
+    parser = argparse.ArgumentParser()
+    cli.add_delete_arguments(parser)
+
+    assert parser.parse_args(["--key", "schedule"]).key == "schedule"
+
+
+def test_search_arguments_stand_on_their_own() -> None:
+    parser = argparse.ArgumentParser()
+    cli.add_search_arguments(parser)
+
+    args = parser.parse_args(["which vaccines", "--limit", "3"])
+
+    assert args.query == "which vaccines"
+    assert args.limit == 3
+    assert args.candidates == DEFAULT_SEARCH_CANDIDATES
