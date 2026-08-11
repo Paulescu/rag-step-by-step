@@ -1,15 +1,17 @@
-"""Searching the knowledge base through the pipeline's retrieval path."""
+"""Searching the Knowledge Base."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from customer_support_chatbot.ingestion.pipeline import IngestionPipeline
+from customer_support_chatbot.ingestion.store import KnowledgeBase
 from tests.builders import write_document
 
 
 def test_search_finds_the_document_that_mentions_the_query_terms(
     pipeline: IngestionPipeline,
+    knowledge_base: KnowledgeBase,
     tmp_path: Path,
 ) -> None:
     pipeline.ingest(
@@ -21,7 +23,7 @@ def test_search_finds_the_document_that_mentions_the_query_terms(
         write_document(tmp_path, "enrol.txt", ["Enrolment rules for postgraduate students."]),
     )
 
-    hits = pipeline.search("enrolment rules postgraduate", limit=1)
+    hits = knowledge_base.search("enrolment rules postgraduate", limit=1)
 
     assert hits
     assert hits[0].document_key == "enrolment-rules"
@@ -30,6 +32,7 @@ def test_search_finds_the_document_that_mentions_the_query_terms(
 
 def test_the_fusion_candidate_count_bounds_what_search_can_return(
     pipeline: IngestionPipeline,
+    knowledge_base: KnowledgeBase,
     tmp_path: Path,
 ) -> None:
     """`candidates` is a retrieval knob in its own right: it caps each branch before fusion."""
@@ -39,8 +42,8 @@ def test_the_fusion_candidate_count_bounds_what_search_can_return(
             write_document(tmp_path, f"notice-{index}.txt", [f"Notice number {index} about fees."]),
         )
 
-    narrow = pipeline.search("notice about fees", limit=4, candidates=1)
-    wide = pipeline.search("notice about fees", limit=4, candidates=20)
+    narrow = knowledge_base.search("notice about fees", limit=4, candidates=1)
+    wide = knowledge_base.search("notice about fees", limit=4, candidates=20)
 
     assert len(narrow) <= 2
     assert len(wide) == 4

@@ -21,6 +21,7 @@ from customer_support_chatbot.ingestion.embedding import (
     DEFAULT_EMBEDDING_MAX_LENGTH,
     DEFAULT_EMBEDDING_MODEL,
     BgeM3Embedder,
+    Embedder,
 )
 from customer_support_chatbot.ingestion.extraction import (
     DEFAULT_MIN_CHARS_PER_PAGE,
@@ -179,11 +180,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_knowledge_base(args: argparse.Namespace) -> KnowledgeBase:
+def build_knowledge_base(
+    args: argparse.Namespace,
+    embedder: Embedder | None = None,
+) -> KnowledgeBase:
     client = QdrantClient(url=str(args.qdrant_url))
     knowledge_base = KnowledgeBase(
         client,
         dense_size=int(args.embedding_dense_size),
+        embedder=embedder,
         chunks_collection=str(args.chunks_collection),
         documents_collection=str(args.documents_collection),
     )
@@ -210,10 +215,14 @@ def build_chunking_settings(args: argparse.Namespace) -> ChunkingSettings:
     )
 
 
-def build_pipeline(args: argparse.Namespace, knowledge_base: KnowledgeBase) -> IngestionPipeline:
+def build_pipeline(
+    args: argparse.Namespace,
+    knowledge_base: KnowledgeBase,
+    embedder: Embedder,
+) -> IngestionPipeline:
     return IngestionPipeline(
         extractor=PdfPageExtractor(),
-        embedder=build_embedder(args),
+        embedder=embedder,
         knowledge_base=knowledge_base,
         raw_files=LocalRawFileStore(Path(args.raw_files_root)),
         chunking=build_chunking_settings(args),
@@ -223,7 +232,10 @@ def build_pipeline(args: argparse.Namespace, knowledge_base: KnowledgeBase) -> I
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    knowledge_base = build_knowledge_base(args)
+    # Only `search` embeds through the Knowledge Base; the other commands do not need a model on
+    # disk to run, and `ingest` hands its own Embedder to the pipeline below.
+    embedder = build_embedder(args) if args.command == "search" else None
+    knowledge_base = build_knowledge_base(args, embedder)
 
     if args.command == "list":
         documents = knowledge_base.list_documents()
@@ -247,9 +259,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No Document with key {args.key}.", file=sys.stderr)
         return 1
 
-    pipeline = build_pipeline(args, knowledge_base)
+    if args.command == "search":
+        hits = knowledge_base.search(
+            str(args.query),
+            limit=int(args.limit),
+            candidates=int(args.candidates),
+        )
+        if not hits:
+            print("No results.")
+            return 0
+        for rank, hit in enumerate(hits, start=1):
+            snippet = hit.text[:280].replace("\n", " ")
+            print(f"{rank}. {hit.document_key} p.{hit.page_number}  (score {hit.score:.4f})")
+            print(f"   {snippet}")
+        return 0
 
     if args.command == "ingest":
+        pipeline = build_pipeline(args, knowledge_base, build_embedder(args))
         result = pipeline.ingest(
             str(args.key),
             Path(args.path),
@@ -270,21 +296,6 @@ def main(argv: list[str] | None = None) -> int:
             f"{document.key}: ingested v{document.ingestion_version}, "
             f"{document.page_count} pages, {document.chunk_count} chunks."
         )
-        return 0
-
-    if args.command == "search":
-        hits = pipeline.search(
-            str(args.query),
-            limit=int(args.limit),
-            candidates=int(args.candidates),
-        )
-        if not hits:
-            print("No results.")
-            return 0
-        for rank, hit in enumerate(hits, start=1):
-            snippet = hit.text[:280].replace("\n", " ")
-            print(f"{rank}. {hit.document_key} p.{hit.page_number}  (score {hit.score:.4f})")
-            print(f"   {snippet}")
         return 0
 
     raise AssertionError(f"unhandled command {args.command}")

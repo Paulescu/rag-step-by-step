@@ -15,11 +15,11 @@ from typing import Any, Final
 from qdrant_client import QdrantClient, models
 from qdrant_client.conversions.common_types import PointId
 
+from customer_support_chatbot.ingestion.embedding import Embedder
 from customer_support_chatbot.ingestion.models import (
     DocumentRecord,
     DocumentStatus,
     EmbeddedChunk,
-    Embedding,
     SearchHit,
 )
 
@@ -85,18 +85,24 @@ def _payload_to_record(
 
 
 class KnowledgeBase:
-    """Everything the pipeline knows how to read from and write to Qdrant."""
+    """The searchable body of documentation: everything read from and written to Qdrant.
+
+    The Embedder is optional because only searching needs one. Listing and deleting Documents are
+    answered from payloads alone, and loading an embedding model to do them would be dead weight.
+    """
 
     def __init__(
         self,
         client: QdrantClient,
         *,
         dense_size: int,
+        embedder: Embedder | None = None,
         chunks_collection: str = DEFAULT_CHUNKS_COLLECTION,
         documents_collection: str = DEFAULT_DOCUMENTS_COLLECTION,
     ) -> None:
         self._client = client
         self._dense_size = dense_size
+        self._embedder = embedder
         self._chunks = chunks_collection
         self._documents = documents_collection
 
@@ -295,23 +301,33 @@ class KnowledgeBase:
 
     def search(
         self,
-        query: Embedding,
+        query: str,
         limit: int = DEFAULT_SEARCH_LIMIT,
         candidates: int = DEFAULT_SEARCH_CANDIDATES,
     ) -> list[SearchHit]:
-        """Hybrid search: dense and sparse branches fused by reciprocal rank fusion in Qdrant."""
+        """Hybrid search: dense and sparse branches fused by reciprocal rank fusion in Qdrant.
+
+        The query is embedded by the same model that embedded the Chunks, which is why the Embedder
+        belongs here rather than at the call site.
+        """
+        if self._embedder is None:
+            raise RuntimeError(
+                "This Knowledge Base was built without an Embedder, so it cannot be searched."
+            )
+
+        embedded_query = self._embedder.embed([query])[0]
         response = self._client.query_points(
             collection_name=self._chunks,
             prefetch=[
                 models.Prefetch(
-                    query=query.dense,
+                    query=embedded_query.dense,
                     using=DENSE_VECTOR,
                     limit=candidates,
                 ),
                 models.Prefetch(
                     query=models.SparseVector(
-                        indices=query.sparse.indices,
-                        values=query.sparse.values,
+                        indices=embedded_query.sparse.indices,
+                        values=embedded_query.sparse.values,
                     ),
                     using=SPARSE_VECTOR,
                     limit=candidates,
