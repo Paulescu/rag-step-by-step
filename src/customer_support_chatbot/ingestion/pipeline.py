@@ -28,14 +28,9 @@ from customer_support_chatbot.ingestion.models import (
     EmbeddedChunk,
     IngestOutcome,
     IngestResult,
-    SearchHit,
 )
 from customer_support_chatbot.ingestion.raw_files import RawFileStore
-from customer_support_chatbot.ingestion.store import (
-    DEFAULT_SEARCH_CANDIDATES,
-    DEFAULT_SEARCH_LIMIT,
-    KnowledgeBase,
-)
+from customer_support_chatbot.ingestion.store import KnowledgeBase
 
 
 def file_content_hash(path: Path) -> str:
@@ -120,18 +115,6 @@ class IngestionPipeline:
         )
         self._knowledge_base.upsert_document(record)
         return IngestResult(outcome=IngestOutcome.INGESTED, document=record)
-
-    def delete(self, document_key: str) -> bool:
-        return self._knowledge_base.delete_document(document_key)
-
-    def search(
-        self,
-        query: str,
-        limit: int = DEFAULT_SEARCH_LIMIT,
-        candidates: int = DEFAULT_SEARCH_CANDIDATES,
-    ) -> list[SearchHit]:
-        embedding = self._embedder.embed([query])[0]
-        return self._knowledge_base.search(embedding, limit=limit, candidates=candidates)
 
     def _quarantine(
         self,

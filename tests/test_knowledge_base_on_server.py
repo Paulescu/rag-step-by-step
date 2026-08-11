@@ -43,6 +43,7 @@ def server_knowledge_base() -> Iterator[KnowledgeBase]:
     base = KnowledgeBase(
         client,
         dense_size=DENSE_SIZE,
+        embedder=HashingEmbedder(),
         chunks_collection=chunks_collection,
         documents_collection=documents_collection,
     )
@@ -114,8 +115,7 @@ def test_hybrid_search_fuses_both_branches(server_knowledge_base: KnowledgeBase)
         [embedded("enrolment", 0, "Enrolment rules for postgraduate students")],
     )
 
-    query = HashingEmbedder().embed(["enrolment rules postgraduate"])[0]
-    hits = server_knowledge_base.search(query, limit=2)
+    hits = server_knowledge_base.search("enrolment rules postgraduate", limit=2)
 
     assert hits
     assert hits[0].document_key == "enrolment"

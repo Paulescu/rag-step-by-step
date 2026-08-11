@@ -24,9 +24,9 @@ def extractor() -> TextFileExtractor:
 
 
 @pytest.fixture
-def knowledge_base() -> Iterator[KnowledgeBase]:
+def knowledge_base(embedder: HashingEmbedder) -> Iterator[KnowledgeBase]:
     client = QdrantClient(":memory:")
-    base = KnowledgeBase(client, dense_size=DENSE_SIZE)
+    base = KnowledgeBase(client, dense_size=DENSE_SIZE, embedder=embedder)
     base.ensure_collections()
     yield base
     client.close()

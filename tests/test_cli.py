@@ -150,6 +150,7 @@ def test_the_knowledge_base_is_built_from_the_embedding_and_collection_flags(
 
     assert recorded == {
         "dense_size": 768,
+        "embedder": None,
         "chunks_collection": "chunks-768",
         "documents_collection": "documents-768",
         "ensured": True,
