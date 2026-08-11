@@ -1,0 +1,21 @@
+{
+  "disabled": false,
+  "pathTemplate": "~/.humanlayer/workspaces/{{ TASKSLUG }}/{{ REPOBASENAME }}",
+  "branchTemplate": "{{ TASKSLUG }}",
+  "sourceRef": "origin/main",
+  "setupCommand": "uv sync",
+  "copyGlobs": [
+    ".env",
+    ".env.local",
+    ".env.development.local",
+    ".claude/settings.local.json",
+    ".humanlayer/workspace.local.json"
+  ],
+  "repos": [
+    {
+      "localPath": ".",
+      "description": "Customer support chatbot",
+      "primary": true
+    }
+  ]
+}
