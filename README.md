@@ -105,8 +105,8 @@ uv run ruff check .
 uv run pyright
 ```
 
-Tests use a fake extractor and a deterministic hashing embedder, so the suite needs neither PDFs
-nor BGE-M3.
+Tests use a fake extractor, a deterministic hashing embedder and a fake IRIS serving DSpace-shaped
+JSON from a dictionary, so the suite needs no PDFs, no BGE-M3 and no network.
 
 #### Running against a real Qdrant server
 
@@ -129,8 +129,8 @@ fine, no volume is needed.
 
 | Command | Tests run |
 | --- | --- |
-| `uv run pytest` | 34 run, 3 skipped |
-| `QDRANT_URL=http://localhost:6333 uv run pytest` | 37 run |
+| `uv run pytest` | 90 run, 3 skipped |
+| `QDRANT_URL=http://localhost:6333 uv run pytest` | 93 run |
 
 Note that `QDRANT_URL` is also the CLI's own configuration variable. If you have it exported in
 your shell for `uv run kb`, a plain `uv run pytest` will pick it up and run the server tests too.
@@ -140,7 +140,58 @@ To force the hermetic run regardless of environment, use `env -u QDRANT_URL uv r
 
 - **Retrieval evaluation.** Chunk size, overlap, top-k and the fusion candidate count are currently
   unvalidated defaults. They are all exposed as flags (see "Tuning parameters"), but nothing scores
-  them yet. `kb search` exists so a golden set can be scored without waiting for the chatbot.
+  them yet. `kb search` exists so a golden set can be scored without waiting for the chatbot, and
+  `kb-demo` now supplies a Knowledge Base big enough for the scores to mean something. What is
+  still missing is the golden set itself: queries with known correct Documents and pages.
 - **An upload interface for the Knowledge Manager.** Ingestion is CLI-driven and run by engineers.
 - **OCR**, so scanned PDFs stay quarantined.
 - **Formats other than PDF.** `PageExtractor` is the seam where they would be added.
+
+## The demo Knowledge Base
+
+One Document proves the pipeline runs. It cannot tell you whether a Chunk size is right, because
+there is nothing else for a query to wrongly retrieve. `kb-demo` fills a Knowledge Base with real
+institutional documentation, so that retrieval has something to get wrong.
+
+The source is [WHO IRIS](https://iris.who.int), the World Health Organization's institutional
+repository: English publications, CC BY-NC-SA 3.0 IGO, a DSpace REST API to select them with, and
+born-digital PDFs with real text layers. Why this collection and not another is
+[ADR-0005](./docs/adr/0005-who-iris-as-the-demo-corpus.md).
+
+`demo/manifest.json` records the collection that was built. It is committed; the PDFs it points at
+are not.
+
+| | |
+| --- | --- |
+| Documents | 100 |
+| Pages | 8,376 |
+| Size | 337 MB |
+| Topics | 14, between 6 and 8 Documents each |
+| Licence | CC BY-NC-SA 3.0 IGO |
+
+```bash
+uv run kb-demo show                    # what the committed manifest holds
+uv run kb-demo fetch --from-manifest   # download exactly that, about fifteen minutes
+uv run kb-demo ingest --limit 5        # try a configuration on five Documents first
+uv run kb-demo ingest                  # the whole collection, hours on CPU
+```
+
+`fetch` needs neither Qdrant nor the model; `ingest` needs both. Both are resumable: a file already
+on disk is not downloaded again, and re-ingesting an unchanged Document is a no-op, so an
+interrupted run of either is restarted by running it again.
+
+To build a different collection instead of replaying the committed one, drop `--from-manifest`:
+
+```bash
+uv run kb-demo fetch --documents 40 --pages 2000 \
+  --topic "cholera" --topic "dengue" --issued-from 2020
+```
+
+Selection takes one publication from each topic in turn, so stopping early still leaves every topic
+represented. Every candidate is put through `quarantine_reason`, the pipeline's own scan gate,
+before it is accepted, so nothing in the manifest lands in the Knowledge Base as Quarantined.
+Documents outside `--min-pdf-pages` and `--max-pdf-pages` (4 and 250) are skipped: a one-page flyer
+teaches nothing about chunking, and a 400-page compendium costs an hour of embedding on its own.
+
+Document Keys are derived from the IRIS handle, so `10665/380063` becomes `who-iris-380063` and a
+re-fetch re-ingests rather than duplicates.
