@@ -109,6 +109,28 @@ def add_embedding_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_chunking_arguments(parser: argparse.ArgumentParser) -> None:
+    """The knobs that decide what a Chunk is, shared by every command that ingests."""
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=ChunkingSettings().max_tokens,
+        help="Chunk size: the token budget a single Chunk is packed up to.",
+    )
+    parser.add_argument(
+        "--overlap-tokens",
+        type=int,
+        default=ChunkingSettings().overlap_tokens,
+        help="Tokens carried from the end of one Chunk into the next.",
+    )
+    parser.add_argument(
+        "--min-chars-per-page",
+        type=float,
+        default=DEFAULT_MIN_CHARS_PER_PAGE,
+        help="Below this, the Document is quarantined as a probable scan.",
+    )
+
+
 def add_ingest_arguments(ingest: argparse.ArgumentParser) -> None:
     ingest.add_argument("--key", required=True, help="Stable Document Key.")
     ingest.add_argument("path", type=Path, help="Path to the PDF.")
@@ -118,24 +140,7 @@ def add_ingest_arguments(ingest: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Re-ingest even if the file is unchanged.",
     )
-    ingest.add_argument(
-        "--max-tokens",
-        type=int,
-        default=ChunkingSettings().max_tokens,
-        help="Chunk size: the token budget a single Chunk is packed up to.",
-    )
-    ingest.add_argument(
-        "--overlap-tokens",
-        type=int,
-        default=ChunkingSettings().overlap_tokens,
-        help="Tokens carried from the end of one Chunk into the next.",
-    )
-    ingest.add_argument(
-        "--min-chars-per-page",
-        type=float,
-        default=DEFAULT_MIN_CHARS_PER_PAGE,
-        help="Below this, the Document is quarantined as a probable scan.",
-    )
+    add_chunking_arguments(ingest)
 
 
 def add_delete_arguments(delete: argparse.ArgumentParser) -> None:
